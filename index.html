@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crossword Pro Trainer</title>
+
+  <!-- PWA Config -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2ecc71">
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  </script>
+
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+    .card { background: white; padding: 25px 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 580px; text-align: center; }
+    .controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .bag-info { font-size: 0.9rem; font-weight: bold; color: #2c3e50; background: #e8f4f8; padding: 5px 12px; border-radius: 12px; }
+    .timer { font-size: 0.9rem; font-weight: bold; color: #e74c3c; background: #fadbd8; padding: 5px 12px; border-radius: 12px; }
+    .rack { display: flex; gap: 8px; justify-content: center; margin: 15px 0; min-height: 48px; }
+    .tile { width: 42px; height: 46px; background: #e67e22; color: white; font-weight: bold; font-size: 1.3rem; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; box-shadow: 0 3px 6px rgba(0,0,0,0.16); }
+    .tile .pt { font-size: 0.65rem; position: absolute; bottom: 2px; right: 4px; }
+    .tile.blank { background: #7f8c8d; }
+    input[type="text"] { width: 80%; padding: 10px; font-size: 1.2rem; border: 2px solid #ddd; border-radius: 6px; text-transform: uppercase; text-align: center; margin-bottom: 15px; letter-spacing: 2px; }
+    input[type="text"]:focus { border-color: #3498db; outline: none; }
+    .btn-group { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+    button { padding: 9px 15px; font-size: 0.9rem; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; }
+    .btn-submit { background-color: #2ecc71; color: white; }
+    .btn-shuffle { background-color: #f1c40f; color: #333; }
+    .btn-pass { background-color: #e67e22; color: white; }
+    .btn-end { background-color: #e74c3c; color: white; }
+    .result { margin-top: 15px; font-size: 0.95rem; font-weight: bold; min-height: 24px; }
+    .dashboard { text-align: left; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-top: 15px; }
+    .history-list { max-height: 200px; overflow-y: auto; padding-left: 20px; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="controls">
+    <div class="bag-info">ถุงเบี้ย: <span id="bag-count">100</span> | คะแนน: <span id="total-score">0</span></div>
+    <div class="timer">เวลา: <span id="timer-count">30</span>s</div>
+  </div>
+
+  <div id="game-area">
+    <div id="rack-container" class="rack"></div>
+    <input type="text" id="answer-input" placeholder="กำลังโหลด dictionary.txt..." disabled autocomplete="off">
+    
+    <div class="btn-group">
+      <button class="btn-submit" onclick="checkAnswer()">ลงคำศัพท์ (Enter)</button>
+      <button class="btn-shuffle" onclick="shuffleRack()">สลับเบี้ย (Space)</button>
+      <button class="btn-pass" onclick="passTurn()">เปลี่ยนเบี้ย</button>
+      <button class="btn-end" onclick="endGame()">สรุปผล</button>
+    </div>
+
+    <div id="result" class="result"></div>
+  </div>
+
+  <div id="dashboard" class="dashboard" style="display:none;">
+    <h3 style="text-align:center; margin-top:0;">📊 สรุปผลคะแนนการซ้อม</h3>
+    <p><strong>คะแนนรวมทั้งหมด:</strong> <span id="dash-score">0</span> คะแนน</p>
+    <p><strong>จำนวนคำที่ลงสำเร็จ:</strong> <span id="dash-words">0</span> คำ</p>
+    <p><strong>ประวัติการทำแต้ม:</strong></p>
+    <ol id="history-list" class="history-list"></ol>
+    <div style="text-align:center; margin-top:15px;">
+      <button class="btn-submit" onclick="initGame()">เริ่มเกมใหม่</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const TILE_SCORES = { A:1, B:3, C:3, D:2, E:1, F:4, G:2, H:4, I:1, J:8, K:5, L:1, M:3, N:1, O:1, P:3, Q:10, R:1, S:1, T:1, U:1, V:4, W:4, X:8, Y:4, Z:10, '?':0 };
+
+  const INITIAL_BAG = [
+    'A','A','A','A','A','A','A','A','A','B','B','C','C','D','D','D','D',
+    'E','E','E','E','E','E','E','E','E','E','E','E','F','F','G','G','G',
+    'H','H','I','I','I','I','I','I','I','I','I','J','K','L','L','L','L',
+    'M','M','N','N','N','N','N','N','O','O','O','O','O','O','O','O','P','P',
+    'Q','R','R','R','R','R','R','S','S','S','S','T','T','T','T','T','T',
+    'U','U','U','U','V','V','W','W','X','Y','Y','Z','?','?'
+  ];
+
+  let dictionarySet = new Set();
+  let bag = [], rack = [], history = [];
+  let totalScore = 0, timerInterval = null, timeLeft = 30;
+
+  async function loadDictionary() {
+    const resultDiv = document.getElementById("result");
+    resultDiv.innerText = "⏳ กำลังโหลดไฟล์ dictionary.txt...";
+    resultDiv.style.color = "#3498db";
+
+    try {
+      const response = await fetch('dictionary.txt');
+      if (!response.ok) throw new Error("หาไฟล์ dictionary.txt ไม่พบ");
+      
+      const text = await response.text();
+      const words = text.split(/\r?\n/);
+      dictionarySet = new Set(words.map(w => w.trim().toUpperCase()).filter(w => w.length > 0));
+
+      resultDiv.innerText = `โหลดพจนานุกรมสำเร็จ! (${dictionarySet.size.toLocaleString()} คำ)`;
+      resultDiv.style.color = "#2ecc71";
+      
+      document.getElementById("answer-input").placeholder = "พิมพ์คำตอบ (Spacebar=สลับเบี้ย)";
+      initGame();
+    } catch (err) {
+      resultDiv.innerText = "❌ ไม่พบไฟล์ dictionary.txt (กรุณาอัปโหลดไฟล์ขึ้น GitHub)";
+      resultDiv.style.color = "#e74c3c";
+    }
+  }
+
+  function initGame() {
+    if (dictionarySet.size === 0) return;
+    bag = [...INITIAL_BAG];
+    history = [];
+    rack = [];
+    totalScore = 0;
+    document.getElementById("total-score").innerText = 0;
+    document.getElementById("game-area").style.display = "block";
+    document.getElementById("dashboard").style.display = "none";
+    fillRack();
+    nextTurn();
+  }
+
+  function fillRack() {
+    while (rack.length < 7 && bag.length > 0) {
+      const idx = Math.floor(Math.random() * bag.length);
+      rack.push(bag.splice(idx, 1)[0]);
+    }
+  }
+
+  function renderRack() {
+    const rackDiv = document.getElementById("rack-container");
+    rackDiv.innerHTML = rack.map(c => `
+      <div class="tile ${c==='?'?'blank':''}">
+        ${c}
+        <span class="pt">${TILE_SCORES[c]}</span>
+      </div>
+    `).join("");
+    document.getElementById("bag-count").innerText = bag.length;
+  }
+
+  function shuffleRack() {
+    rack.sort(() => Math.random() - 0.5);
+    renderRack();
+  }
+
+  function startTimer() {
+    clearInterval(timerInterval);
+    timeLeft = 30;
+    document.getElementById("timer-count").innerText = timeLeft;
+    timerInterval = setInterval(() => {
+      timeLeft--;
+      document.getElementById("timer-count").innerText = timeLeft;
+      if (timeLeft <= 0) {
+        clearInterval(timerInterval);
+        passTurn();
+      }
+    }, 1000);
+  }
+
+  function nextTurn() {
+    renderRack();
+    if (rack.length === 0) { endGame(); return; }
+    
+    const input = document.getElementById("answer-input");
+    input.disabled = false;
+    input.value = "";
+    input.focus();
+    startTimer();
+  }
+
+  function checkAnswer() {
+    const input = document.getElementById("answer-input").value.trim().toUpperCase();
+    const resultDiv = document.getElementById("result");
+
+    if (input.length < 2) {
+      resultDiv.innerText = "คำต้องยาวอย่างน้อย 2 ตัวอักษร!";
+      resultDiv.style.color = "#e67e22";
+      return;
+    }
+
+    if (!dictionarySet.has(input)) {
+      resultDiv.innerText = `❌ "${input}" ไม่มีอยู่ในพจนานุกรม!`;
+      resultDiv.style.color = "#e74c3c";
+      return;
+    }
+
+    let tempRack = [...rack];
+    let wordScore = 0;
+    let usedTilesCount = 0;
+
+    for (let char of input) {
+      let idx = tempRack.indexOf(char);
+      if (idx !== -1) {
+        wordScore += TILE_SCORES[char];
+        tempRack.splice(idx, 1);
+      } else {
+        let blankIdx = tempRack.indexOf('?');
+        if (blankIdx !== -1) {
+          wordScore += TILE_SCORES['?'];
+          tempRack.splice(blankIdx, 1);
+        } else {
+          resultDiv.innerText = "เบี้ยบนมือไม่พอสำหรับคำนี้!";
+          resultDiv.style.color = "#e74c3c";
+          return;
+        }
+      }
+      usedTilesCount++;
+    }
+
+    clearInterval(timerInterval);
+    
+    let isBingo = usedTilesCount === 7;
+    if (isBingo) wordScore += 50;
+
+    totalScore += wordScore;
+    document.getElementById("total-score").innerText = totalScore;
+
+    rack = tempRack;
+    history.push({ word: input, score: wordScore, bingo: isBingo });
+    fillRack();
+
+    resultDiv.innerText = `👍 "${input}" ถูกต้อง! ได้ ${wordScore} แต้ม ${isBingo ? '🔥 BINGO!' : ''}`;
+    resultDiv.style.color = "#2ecc71";
+
+    setTimeout(nextTurn, 800);
+  }
+
+  function passTurn() {
+    clearInterval(timerInterval);
+    bag.push(...rack);
+    rack = [];
+    fillRack();
+    nextTurn();
+  }
+
+  function endGame() {
+    clearInterval(timerInterval);
+    document.getElementById("game-area").style.display = "none";
+    document.getElementById("dashboard").style.display = "block";
+
+    document.getElementById("dash-score").innerText = totalScore;
+    document.getElementById("dash-words").innerText = history.length;
+
+    const list = document.getElementById("history-list");
+    list.innerHTML = history.length === 0 ? "<li>ไม่มีการลงคำศัพท์</li>" :
+      history.map(h => `<li><strong>${h.word}</strong> - ${h.score} แต้ม ${h.bingo ? '🎉 (Bingo!)' : ''}</li>`).join("");
+  }
+
+  document.getElementById("answer-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      checkAnswer();
+    } else if (e.code === "Space") {
+      e.preventDefault();
+      shuffleRack();
+    }
+  });
+
+  loadDictionary();
+</script>
+</body>
+</html>
